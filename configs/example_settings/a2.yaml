@@ -1,0 +1,8 @@
+urdf: a2_v1_0_0.urdf
+link_radius: 0.05 
+base_links:
+  - base_link
+ee_links:
+  - left_arm_link7
+starting_config: [-0.75, 0.1655, -1.03, -1.75, 0.898, 0.026, 1.089]
+obstacles:

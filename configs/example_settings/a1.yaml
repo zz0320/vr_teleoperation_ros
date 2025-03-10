@@ -1,0 +1,8 @@
+urdf: A1_URDF_0607_0028_no_gripper.urdf
+link_radius: 0.05 
+base_links:
+  - base_link
+ee_links:
+  - arm_seg6
+starting_config: [0.0, 1.06, -0.69, -1.56, 0.0, 0.0]
+obstacles:

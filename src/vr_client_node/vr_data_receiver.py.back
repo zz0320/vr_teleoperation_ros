@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+
+import json
+import argparse
+import asyncio
+import websockets
+import time
+import rospy
+from vr_teleoperation_msg.msg import VrPose
+
+# 初始化ROS节点
+rospy.init_node("vr_data_receiver", anonymous=True)
+
+# 创建ROS发布者
+pose_pub = rospy.Publisher("vr_pose", VrPose, queue_size=10)
+# LOCAL_SERVER_IP = "192.168.110.48"
+
+
+def generate_j4j6_cmd(arm_name, up, down, left, right, front, side):
+    j4_cmd_value = 0
+    if right:
+        j4_cmd_value = 1
+        print(f"{arm_name} j4 increase value")
+    elif left:
+        j4_cmd_value = -1
+        print(f"{arm_name} j4 decrease value")
+
+    j5_cmd_value = 0
+    if up:
+        j5_cmd_value = 1
+        print(f"{arm_name} j5 increase value")
+    elif down:
+        j5_cmd_value = -1
+        print(f"{arm_name} j5 decrease value")
+
+    j6_cmd_value = 0
+    if front:
+        j6_cmd_value = 1
+        print(f"{arm_name} j6 increase value")
+    elif side:
+        j6_cmd_value = -1
+        print(f"{arm_name} j6 decrease value")
+
+    return [j4_cmd_value, j5_cmd_value, j6_cmd_value]
+
+
+# 处理客户端连接
+async def handler(websocket, path):
+    # 向客户端发送欢迎消息
+    await websocket.send("Welcome to the WebSocket server!")
+    print(f"Client connected from {websocket.remote_address}")
+    last_trigger_time_left_front = 0
+    last_trigger_time_left_side = 0
+    try:
+        async for message in websocket:
+            print("=================== pose ====================")
+            data = json.loads(message)
+            # 构造PoseStamped消息
+            pose_msg = VrPose()
+            pose_msg.header.stamp = rospy.Time.now()
+            control_mode = data['p_control_mode']
+            pose_msg.control_mode = control_mode
+            current_time = time.time()
+            if control_mode == 0:
+                head_pos = data["p_headPosition"]
+                left_pos = data["p_leftControllerPosition"]
+                left_quat = data["p_leftControllerRotation"]
+                right_pos = data["p_rightControllerPosition"]
+                right_quat = data["p_rightControllerRotation"]
+
+                pose_msg.head_position = [head_pos["x"], head_pos["y"], head_pos["z"]]
+                pose_msg.left_position = [left_pos["x"], left_pos["y"], left_pos["z"]]
+                pose_msg.right_position = [right_pos["x"], right_pos["y"], right_pos["z"]]
+                pose_msg.left_quaternion = [
+                    left_quat["x"],
+                    left_quat["y"],
+                    left_quat["z"],
+                    left_quat["w"],
+                ]
+                pose_msg.left_disconnect_pressed = data["p_leftHand_Y"]
+                pose_msg.right_disconnect_pressed = data["p_rightHand_B"]
+                pose_msg.right_quaternion = [
+                    right_quat["x"],
+                    right_quat["y"],
+                    right_quat["z"],
+                    right_quat["w"],
+                ]
+                pose_msg.left_gripper_close = data["p_leftHand_X"]
+                if data["p_leftHand_X"]:
+                    print("left gripper close")
+                pose_msg.right_gripper_close = data["p_rightHand_A"]
+                if data["p_rightHand_A"]:
+                    print("right gripper close")
+
+                # left_j4j6_cmd = generate_j4j6_cmd(
+                #     "left",
+                #     data["p_left_Thumbstick_Up"],
+                #     data["p_left_Thumbstick_Down"],
+                #     data["p_left_Thumbstick_Left"],
+                #     data["p_left_Thumbstick_Right"],
+                #     data["p_is_left_Front_Closed"],
+                #     data["p_is_left_Side_Closed"],
+                # )
+                # right_j4j6_cmd = generate_j4j6_cmd(
+                #     "right",
+                #     data["p_right_Thumbstick_Up"],
+                #     data["p_right_Thumbstick_Down"],
+                #     data["p_right_Thumbstick_Left"],
+                #     data["p_right_Thumbstick_Right"],
+                #     data["p_is_right_Front_Closed"],
+                #     data["p_is_right_Side_Closed"],
+                # )
+                # pose_msg.left_j4j6_cmd = left_j4j6_cmd
+                # pose_msg.right_j4j6_cmd = right_j4j6_cmd
+            elif control_mode == 1:
+                pose_msg.waist_right = data["p_is_right_Front_Closed"]
+                pose_msg.waist_left =  data["p_is_right_Side_Closed"]
+                pose_msg.torso_down =  data["p_left_Thumbstick_Up"]
+                pose_msg.torso_up =  data["p_left_Thumbstick_Down"]
+                pose_msg.tilt_forward =  data["p_right_Thumbstick_Up"]
+                pose_msg.tilt_backward =  data["p_right_Thumbstick_Down"]
+            elif control_mode==2:
+                pose_msg.y_vel = data["p_right_Thumbstick_Left"] - data["p_right_Thumbstick_Right"]
+                pose_msg.x_vel = data["p_left_Thumbstick_Up"] - data["p_left_Thumbstick_Down"]
+                pose_msg.angular_vel = data["p_is_right_Side_Closed"] - data["p_is_right_Front_Closed"]
+            if data["p_left_trigger_Front_state"] > 0.8 and (current_time - last_trigger_time_left_front) > 2.0:
+                print("left front pressed")
+                pose_msg.breakpoint = True
+                last_trigger_time_left_front = current_time
+            if data["p_left_Side_Trigger"] > 0.8 and (current_time - last_trigger_time_left_side) > 2.0:
+                pose_msg.exception = True
+                print("left side pressed")
+                last_trigger_time_left_side = current_time
+            
+            pose_pub.publish(pose_msg)
+
+            # 向客户端回显消息
+            the_send = "Server already received " + str(data["p_msg_id"])
+
+            await websocket.send(the_send)
+    except websockets.exceptions.ConnectionClosed as e:
+        print(f"Connection closed: {e}")
+
+
+# 启动WebSocket服务器
+async def main(local_server_ip):
+    server = await websockets.serve(handler, local_server_ip, 8765, ping_interval=None)
+    print(f"WebSocket server started at ws://{local_server_ip}:8765")
+
+    await server.wait_closed()
+
+if __name__ == "__main__":
+    import os
+    ros_ip = os.environ.get('ROS_IP')
+    local_server_ip = os.environ.get('R1_IP', ros_ip) 
+    # 运行服务器
+    asyncio.run(main(local_server_ip))
